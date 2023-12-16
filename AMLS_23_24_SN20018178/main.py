@@ -1,5 +1,4 @@
-import argparse, sys
-from typing import Literal
+import argparse
 
 parser = argparse.ArgumentParser(prog='main.py')
 parser.add_argument('-t', '--task', choices=['A','B'])

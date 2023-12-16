@@ -6,4 +6,5 @@ o	the packages required to run your code (e.g. numpy, scipy, etc.).
 ```
 torch // I use 2.1.0+cu121 (CUDA-enabled for GPU)
 medmnist
+sklearn
 ```
