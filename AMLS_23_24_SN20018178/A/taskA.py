@@ -506,9 +506,9 @@ if __name__ == '__main__':
     s.predict_classifier('train', save=True)
     s.predict_classifier('val', save=True)
     s.predict_classifier('test', save=True)
-    ''' 
+    '''
 
-    modelsel = cross_validation(n=7, iter=3)
+    modelsel = cross_validation(n=7, iter=20)
     modelsel.cv()
     modelsel.predict_on_best_hparams('train')
     modelsel.predict_on_best_hparams('val')
