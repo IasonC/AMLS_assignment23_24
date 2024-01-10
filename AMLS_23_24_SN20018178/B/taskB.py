@@ -179,7 +179,8 @@ import torch
 import torchvision
 from torchvision.models.resnet import ResNet18_Weights
 from torch.utils.data import TensorDataset, DataLoader 
-from senet.se_resnet import resnet_model
+from torchmetrics import Precision, Recall
+#from senet.se_resnet import resnet_model
 import copy
 
 class SqueezeExcitationResNet(Data_Path):
@@ -194,6 +195,7 @@ class SqueezeExcitationResNet(Data_Path):
 
         self.device = device
         self.batch_size = batch_size
+        self.num_classes = num_classes
         self.dataloading()
 
         #self.model = torchvision.models.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1) #resnet_model()
@@ -221,6 +223,11 @@ class SqueezeExcitationResNet(Data_Path):
         self.optimizer = torch.optim.SGD(params_to_update, lr=0.01, momentum=0.9, weight_decay=1e-4)
         self.criterion = torch.nn.CrossEntropyLoss()
         #self.scheduler = lr_scheduler.StepLR(80, 0.1)
+
+        # metrics Precision & Recall
+        self.P = Precision(task="multiclass", average='macro', num_classes=num_classes).to(device)
+        self.R = Recall(task="multiclass", average='macro', num_classes=num_classes).to(device)
+            # macro averaging to emphasize class performance, not instance (avoid class imbalance)
 
     def set_parameter_requires_grad(self, model, feature_extracting):
         if feature_extracting:
@@ -281,6 +288,9 @@ class SqueezeExcitationResNet(Data_Path):
 
                 current_loss = 0.0
                 current_corrects = 0
+                current_precision = 0
+                current_recall = 0
+                batch_count = 0
 
                 for x, y in self.dataloaders_dict[mode]:
                     #x = x.to(self.device)
@@ -300,6 +310,12 @@ class SqueezeExcitationResNet(Data_Path):
             
                         _, preds = torch.max(y_pred, 1)
 
+                        
+                        (precision, recall) = (self.P(preds, y), self.R(preds, y))
+                            # macro average for emphasis on classes, not instances (counter class imbalance)
+                        precision, recall = precision.item(), recall.item() # extract value from 1-d torch.tensor output
+
+
                         # backward + optimize only if in training phase
                         if mode == 'train':
                             loss.backward()
@@ -308,11 +324,17 @@ class SqueezeExcitationResNet(Data_Path):
                     # statistics
                     current_loss += loss.item() * x.size(0)
                     current_corrects += torch.sum(preds == y)
+                    current_precision += precision
+                    current_recall += recall
+
+                    batch_count += 1
 
                 epoch_loss = current_loss / len(self.dataloaders_dict[mode].dataset)
                 epoch_acc = current_corrects.double() / len(self.dataloaders_dict[mode].dataset)
+                epoch_precision = current_precision / batch_count
+                epoch_recall = current_recall / batch_count
 
-                print('{} Loss: {:.4f} Acc: {:.4f}'.format(mode, epoch_loss, epoch_acc))
+                print('{} Loss: {:.4f} Acc: {:.4f} Prec: {:.4f} Rec: {:.4f}'.format(mode, epoch_loss, epoch_acc, epoch_precision, epoch_recall))
 
                 # log val_acc and deep copy the model again if it is an improvement
                 if mode == 'val':
