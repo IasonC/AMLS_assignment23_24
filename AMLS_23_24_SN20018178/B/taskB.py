@@ -1,5 +1,5 @@
 import os
-import time
+import time, json
 from tqdm import tqdm
 from typing import Literal, Tuple
 from medmnist import PathMNIST
@@ -260,7 +260,7 @@ class SqueezeExcitationResNet(Data_Path):
 
         print('Dataloading done...')
 
-    def train_val_epochs(self, epochs):
+    def train_model(self, epochs):
         
         '''tqdm_rep = reporters.TQDMReporter(range(epochs))
         tensorboard_rep = reporters.TensorboardReporter('./senet/logdir/')
@@ -272,10 +272,12 @@ class SqueezeExcitationResNet(Data_Path):
         
 
         val_acc = [] # track val accuracy
-        best_model = copy.deepcopy(self.model_ft.state_dict())
+        self.best_model = copy.deepcopy(self.model_ft.state_dict())
         best_acc = 0.0
         count_not_better = 0
 
+        log = {'train': {'loss': [], 'acc': [], 'precision': [], 'recall': []},
+               'val': {'loss': [], 'acc': [], 'precision': [], 'recall': []}}
 
         for e in range(epochs):
 
@@ -311,12 +313,10 @@ class SqueezeExcitationResNet(Data_Path):
                         loss = self.criterion(y_pred, y)
             
                         _, preds = torch.max(y_pred, 1)
-
                         
                         (precision, recall) = (self.P(preds, y), self.R(preds, y))
                             # macro average for emphasis on classes, not instances (counter class imbalance)
                         precision, recall = precision.item(), recall.item() # extract value from 1-d torch.tensor output
-
 
                         # backward + optimize only if in training phase
                         if mode == 'train':
@@ -336,6 +336,12 @@ class SqueezeExcitationResNet(Data_Path):
                 epoch_precision = current_precision / batch_count
                 epoch_recall = current_recall / batch_count
 
+                # add to log
+                log[mode]['loss'].append(epoch_loss)
+                log[mode]['acc'].append(epoch_acc)
+                log[mode]['precision'].append(epoch_precision)
+                log[mode]['recall'].append(epoch_recall)
+
                 print('{} Loss: {:.4f} Acc: {:.4f} Prec: {:.4f} Rec: {:.4f}'.format(mode, epoch_loss, epoch_acc, epoch_precision, epoch_recall))
                 print('\n========================================')
 
@@ -344,7 +350,7 @@ class SqueezeExcitationResNet(Data_Path):
                     val_acc.append(epoch_acc)
                     if epoch_acc > best_acc:
                         best_acc = epoch_acc
-                        best_model = copy.deepcopy(self.model_ft.state_dict())
+                        self.best_model = copy.deepcopy(self.model_ft.state_dict())
                     elif epoch_acc < 1.01 * best_acc: # next epoch less than 1 percent val-acc improvement
                         count_not_better += 1
                 
@@ -352,9 +358,10 @@ class SqueezeExcitationResNet(Data_Path):
                 if count_not_better >= 5:
                     print('Early Stopping: 5 epochs with no val-acc improvement...')
                     break
-
-        self.model_ft.load_state_dict(best_model)
-        return self.model_ft, val_acc
+        
+        # save json log
+        with open('./logs/log_resnet_v1.json', 'w') as fp:
+            json.dump(log, fp)
 
         '''
         # Training
@@ -378,7 +385,47 @@ class SqueezeExcitationResNet(Data_Path):
         print(f'Val Loss: {loss.item()}')
         '''
 
-        print('\n\n')
+    def test_model(self):
+        # load best model
+        self.model_ft.load_state_dict(self.best_model)
+
+        L, acc, prec, rec, batch_count = 0.0, 0, 0.0, 0.0, 0
+
+        for x, y in self.dataloaders_dict['test']:
+            if x.shape[0] < self.batch_size:
+                s = x.shape[0]
+            else:
+                s = self.batch_size
+            
+            #print(f'SHAPE: x = {x.shape}, y = {y.shape}')
+            x = torch.reshape(x, (s, 3, 28, 28))
+            #y = y.to(self.device)
+        
+            self.optimizer.zero_grad()
+
+            with torch.no_grad():
+                y_pred = self.model_ft(x)
+                loss = self.criterion(y_pred, y)
+    
+                _, preds = torch.max(y_pred, 1)
+                
+                (precision, recall) = (self.P(preds, y), self.R(preds, y))
+                    # macro average for emphasis on classes, not instances (counter class imbalance)
+                precision, recall = precision.item(), recall.item() # extract value from 1-d torch.tensor output
+
+            # statistics
+            L += loss.item() * x.size(0)
+            acc += torch.sum(preds == y)
+            prec += precision
+            rec += recall
+            batch_count += 1
+
+        L /= len(self.dataloaders_dict['test'].dataset)
+        acc = acc.double() / len(self.dataloaders_dict['test'].dataset)
+        prec /= batch_count
+        rec /= batch_count
+
+        print('TEST DATA results:\nLoss {:.4f} || Acc {:.4f} || Precision {:.4f} || Recall {:.4f}'.format(L, acc, prec, rec))
 
 
 if __name__ == "__main__":
@@ -398,4 +445,5 @@ if __name__ == "__main__":
     print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')'''
 
     se = SqueezeExcitationResNet(feature_extract=False)
-    se.train_val_epochs(epochs=100)
+    se.train_model(epochs=100)
+    se.test_model()
