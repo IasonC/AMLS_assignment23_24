@@ -220,7 +220,7 @@ class SqueezeExcitationResNet(Data_Path):
         else:
             params_to_update = self.model_ft.parameters()
         
-        self.optimizer = torch.optim.SGD(params_to_update, lr=0.01, momentum=0.9, weight_decay=1e-4)
+        self.optimizer = torch.optim.SGD(params_to_update, lr=0.001, momentum=0.9)
         self.criterion = torch.nn.CrossEntropyLoss()
         #self.scheduler = lr_scheduler.StepLR(80, 0.1)
 
@@ -274,10 +274,12 @@ class SqueezeExcitationResNet(Data_Path):
         val_acc = [] # track val accuracy
         best_model = copy.deepcopy(self.model_ft.state_dict())
         best_acc = 0.0
+        count_not_better = 0
+
 
         for e in range(epochs):
 
-            print(f'EPOCH {e} of {epochs}\n==================================\n')
+            print(f'\nEPOCH {e} of {epochs}\n')
 
             # handle training and validation modes
             for mode in ['train','val']:
@@ -335,6 +337,7 @@ class SqueezeExcitationResNet(Data_Path):
                 epoch_recall = current_recall / batch_count
 
                 print('{} Loss: {:.4f} Acc: {:.4f} Prec: {:.4f} Rec: {:.4f}'.format(mode, epoch_loss, epoch_acc, epoch_precision, epoch_recall))
+                print('\n========================================')
 
                 # log val_acc and deep copy the model again if it is an improvement
                 if mode == 'val':
@@ -342,6 +345,13 @@ class SqueezeExcitationResNet(Data_Path):
                     if epoch_acc > best_acc:
                         best_acc = epoch_acc
                         best_model = copy.deepcopy(self.model_ft.state_dict())
+                    elif epoch_acc < 1.01 * best_acc: # next epoch less than 1 percent val-acc improvement
+                        count_not_better += 1
+                
+                # early stopping
+                if count_not_better >= 5:
+                    print('Early Stopping: 5 epochs with no val-acc improvement...')
+                    break
 
         self.model_ft.load_state_dict(best_model)
         return self.model_ft, val_acc
@@ -387,5 +397,5 @@ if __name__ == "__main__":
     print(f'\nTime to fit: {tf_f - tf_i}')
     print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')'''
 
-    se = SqueezeExcitationResNet()
-    se.train_val_epochs(epochs=1)
+    se = SqueezeExcitationResNet(feature_extract=False)
+    se.train_val_epochs(epochs=100)
