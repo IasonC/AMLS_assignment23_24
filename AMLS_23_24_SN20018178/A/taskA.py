@@ -509,7 +509,7 @@ if __name__ == '__main__':
     '''
 
     modelsel = cross_validation(n=7, iter=20)
-    modelsel.cv()
+    #modelsel.cv()
     modelsel.predict_on_best_hparams('train')
     modelsel.predict_on_best_hparams('val')
     modelsel.predict_on_best_hparams('test')
