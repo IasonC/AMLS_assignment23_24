@@ -176,41 +176,84 @@ class SVM_Path(Data_Path):
 ############################################################################
 
 import torch
+import torchvision
+from torchvision.models.resnet import ResNet18_Weights
 from torch.utils.data import TensorDataset, DataLoader 
 from senet.se_resnet import resnet_model
+import copy
 
 class SqueezeExcitationResNet(Data_Path):
-    def __init__(self):
+    def __init__(self, 
+                 num_classes: int = 9, 
+                 batch_size: int = 64, 
+                 feature_extract: bool = True, 
+                 use_pretrained: bool = True, 
+                 device: str = 'cuda'
+                 ) -> None:
         super().__init__()
 
+        self.device = device
+        self.batch_size = batch_size
         self.dataloading()
 
-        self.model = resnet_model()
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)
+        #self.model = torchvision.models.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1) #resnet_model()
+            # resnet pretrained on ImageNet (transfer learning)
+        self.model_ft = torchvision.models.resnet18(pretrained=use_pretrained)
+        self.set_parameter_requires_grad(self.model_ft, feature_extract)
+        num_ftrs = self.model_ft.fc.in_features
+        self.model_ft.fc = torch.nn.Linear(num_ftrs, num_classes)
+        self.input_size = 28
+
+        self.model_ft.to(device)
+        
+        print('\nResNet18 Model:\n---------------------------------')
+        print(self.model_ft)
+
+        # Gather parameters for learning (based on pretraining & freezing)
+        if feature_extract:
+            params_to_update = []
+            for name,param in self.model_ft.named_parameters():
+                if param.requires_grad == True:
+                    params_to_update.append(param)
+        else:
+            params_to_update = self.model_ft.parameters()
+        
+        self.optimizer = torch.optim.SGD(params_to_update, lr=0.01, momentum=0.9, weight_decay=1e-4)
         self.criterion = torch.nn.CrossEntropyLoss()
         #self.scheduler = lr_scheduler.StepLR(80, 0.1)
 
-    def dataloading(self, batch_size: int = 64) -> None:
+    def set_parameter_requires_grad(self, model, feature_extracting):
+        if feature_extracting:
+            for param in model.parameters():
+                param.requires_grad = False
+
+    def dataloading(self) -> None:
         print('Dataloading starting...')
 
-        tr = torch.Tensor(self.train)
-        tr_label = torch.tensor(self.train_labels, dtype=torch.long)
-        v = torch.Tensor(self.val)
-        v_label = torch.tensor(self.val_labels, dtype=torch.long)
-        te = torch.Tensor(self.test)
-        te_label = torch.tensor(self.test_labels, dtype=torch.long)
+        tr = torch.Tensor(self.train).to(self.device)
+        tr_label = torch.tensor(self.train_labels, dtype=torch.long).to(self.device)
+        v = torch.Tensor(self.val).to(self.device)
+        v_label = torch.tensor(self.val_labels, dtype=torch.long).to(self.device)
+        te = torch.Tensor(self.test).to(self.device)
+        te_label = torch.tensor(self.test_labels, dtype=torch.long).to(self.device)
 
         train_dataset = TensorDataset(tr, tr_label)
         val_dataset = TensorDataset(v, v_label)
         test_dataset = TensorDataset(te, te_label)
 
-        self.train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        self.val_dataloader = DataLoader(val_dataset, batch_size=batch_size)
-        self.test_dataloader = DataLoader(test_dataset, batch_size=batch_size)
+        train_dataloader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
+        val_dataloader = DataLoader(val_dataset, batch_size=self.batch_size)
+        test_dataloader = DataLoader(test_dataset, batch_size=self.batch_size)
+
+        self.dataloaders_dict = dict(
+            train=train_dataloader,
+            val=val_dataloader,
+            test=test_dataloader,
+        )
 
         print('Dataloading done...')
 
-    def se_main(self, epochs):
+    def train_val_epochs(self, epochs):
         
         '''tqdm_rep = reporters.TQDMReporter(range(epochs))
         tensorboard_rep = reporters.TensorboardReporter('./senet/logdir/')
@@ -220,27 +263,88 @@ class SqueezeExcitationResNet(Data_Path):
                 trainer.train(self.train_dataloader)
                 trainer.test(self.val_dataloader)'''
         
+
+        val_acc = [] # track val accuracy
+        best_model = copy.deepcopy(self.model_ft.state_dict())
+        best_acc = 0.0
+
         for e in range(epochs):
 
-            # Training
-            for batch_idx, (x,y) in enumerate(self.train_dataloader):
-                x = torch.reshape(x, (64,3,28,28))
+            print(f'EPOCH {e} of {epochs}\n==================================\n')
+
+            # handle training and validation modes
+            for mode in ['train','val']:
+                if mode=='train':
+                    self.model_ft.train()
+                elif mode=='val':
+                    self.model_ft.eval() # set mode
+
+                current_loss = 0.0
+                current_corrects = 0
+
+                for x, y in self.dataloaders_dict[mode]:
+                    #x = x.to(self.device)
+
+                    if x.shape[0] < self.batch_size:
+                        continue # last batch, uneven
+                    
+                    #print(f'SHAPE: x = {x.shape}, y = {y.shape}')
+                    x = torch.reshape(x, (self.batch_size, 3, 28, 28))
+                    #y = y.to(self.device)
                 
-                self.optimizer.zero_grad() # clear gradients
+                    self.optimizer.zero_grad()
+
+                    with torch.set_grad_enabled(mode=='train'):
+                        y_pred = self.model_ft(x)
+                        loss = self.criterion(y_pred, y)
+            
+                        _, preds = torch.max(y_pred, 1)
+
+                        # backward + optimize only if in training phase
+                        if mode == 'train':
+                            loss.backward()
+                            self.optimizer.step()
+
+                    # statistics
+                    current_loss += loss.item() * x.size(0)
+                    current_corrects += torch.sum(preds == y)
+
+                epoch_loss = current_loss / len(self.dataloaders_dict[mode].dataset)
+                epoch_acc = current_corrects.double() / len(self.dataloaders_dict[mode].dataset)
+
+                print('{} Loss: {:.4f} Acc: {:.4f}'.format(mode, epoch_loss, epoch_acc))
+
+                # log val_acc and deep copy the model again if it is an improvement
+                if mode == 'val':
+                    val_acc.append(epoch_acc)
+                    if epoch_acc > best_acc:
+                        best_acc = epoch_acc
+                        best_model = copy.deepcopy(self.model_ft.state_dict())
+
+        self.model_ft.load_state_dict(best_model)
+        return self.model_ft, val_acc
+
+        '''
+        # Training
+        for batch_idx, (x,y) in enumerate(self.train_dataloader):
+            x = torch.reshape(x, (64,3,28,28))
+            
+            self.optimizer.zero_grad() # clear gradients
+            ypred = self.model(x)
+            loss = self.criterion(ypred,y)
+            loss.backward() # calculate gradients
+            self.optimizer.step() # update weights
+            
+        print(f'Train Loss: {loss.item()}')
+
+        # Validation
+        with torch.no_grad():
+            for batch_idx, (x,y) in enumerate(self.val_dataloader):
                 ypred = self.model(x)
                 loss = self.criterion(ypred,y)
-                loss.backward() # calculate gradients
-                self.optimizer.step() # update weights
-                
-            print(f'Train Loss: {loss.item()}')
-
-            # Validation
-            with torch.no_grad():
-                for batch_idx, (x,y) in enumerate(self.val_dataloader):
-                    ypred = self.model(x)
-                    loss = self.criterion(ypred,y)
-                
-            print(f'Val Loss: {loss.item()}')
+            
+        print(f'Val Loss: {loss.item()}')
+        '''
 
         print('\n\n')
 
@@ -262,4 +366,4 @@ if __name__ == "__main__":
     print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')'''
 
     se = SqueezeExcitationResNet()
-    se.se_main(epochs=1)
+    se.train_val_epochs(epochs=1)
