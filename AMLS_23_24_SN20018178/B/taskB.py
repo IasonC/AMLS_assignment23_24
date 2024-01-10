@@ -276,8 +276,8 @@ class SqueezeExcitationResNet(Data_Path):
         best_acc = 0.0
         count_not_better = 0
 
-        log = {'train': {'loss': [], 'acc': [], 'precision': [], 'recall': []},
-               'val': {'loss': [], 'acc': [], 'precision': [], 'recall': []}}
+        log = {'train-loss': [], 'train-acc': [], 'train-precision': [], 'train-recall': [],
+               'val-loss': [], 'val-acc': [], 'val-precision': [], 'val-recall': []}
 
         for e in range(epochs):
 
@@ -337,13 +337,12 @@ class SqueezeExcitationResNet(Data_Path):
                 epoch_recall = current_recall / batch_count
 
                 # add to log
-                log[mode]['loss'].append(epoch_loss)
-                log[mode]['acc'].append(epoch_acc)
-                log[mode]['precision'].append(epoch_precision)
-                log[mode]['recall'].append(epoch_recall)
+                log[f'{mode}-loss'].append(epoch_loss)
+                log[f'{mode}-acc'].append(epoch_acc)
+                log[f'{mode}-precision'].append(epoch_precision)
+                log[f'{mode}-recall'].append(epoch_recall)
 
                 print('{} Loss: {:.4f} Acc: {:.4f} Prec: {:.4f} Rec: {:.4f}'.format(mode, epoch_loss, epoch_acc, epoch_precision, epoch_recall))
-                print('\n========================================')
 
                 # log val_acc and deep copy the model again if it is an improvement
                 if mode == 'val':
@@ -351,13 +350,15 @@ class SqueezeExcitationResNet(Data_Path):
                     if epoch_acc > best_acc:
                         best_acc = epoch_acc
                         self.best_model = copy.deepcopy(self.model_ft.state_dict())
-                    elif epoch_acc < 1.01 * best_acc: # next epoch less than 1 percent val-acc improvement
+                    elif epoch_acc < 1.1 * best_acc: # next epoch less than 10 percent val-acc improvement
                         count_not_better += 1
+
+            print('=========================================')
                 
-                # early stopping
-                if count_not_better >= 5:
-                    print('Early Stopping: 5 epochs with no val-acc improvement...')
-                    break
+            # early stopping
+            if count_not_better >= 10:
+                print('Early Stopping: 10 epochs with no val-acc improvement...')
+                break
         
         # save json log
         with open('./logs/log_resnet_v1.json', 'w') as fp:
