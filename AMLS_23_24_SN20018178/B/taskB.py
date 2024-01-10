@@ -268,7 +268,7 @@ class SqueezeExcitationResNet(Data_Path):
 
         print("Dataloading done...")
 
-    def train_model(self, epochs):
+    def train_model(self, epochs: int = 10, early_stopping: bool = False):
         """tqdm_rep = reporters.TQDMReporter(range(epochs))
         tensorboard_rep = reporters.TensorboardReporter('./senet/logdir/')
         _callbacks = [tqdm_rep, tensorboard_rep, callbacks.AccuracyCallback()]
@@ -356,7 +356,7 @@ class SqueezeExcitationResNet(Data_Path):
 
                 # add to log
                 log[f"{mode}-loss"].append(epoch_loss)
-                log[f"{mode}-acc"].append(epoch_acc)
+                log[f"{mode}-acc"].append(epoch_acc.item())
                 log[f"{mode}-precision"].append(epoch_precision)
                 log[f"{mode}-recall"].append(epoch_recall)
 
@@ -380,7 +380,7 @@ class SqueezeExcitationResNet(Data_Path):
             print("=========================================")
 
             # early stopping
-            if count_not_better >= 10:
+            if early_stopping and count_not_better >= 10:
                 print("Early Stopping: 10 epochs with no val-acc improvement...")
                 break
 
