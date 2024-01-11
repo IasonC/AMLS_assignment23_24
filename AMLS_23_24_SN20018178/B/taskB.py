@@ -1,4 +1,4 @@
-import os
+import os, sys
 import time, json
 from tqdm import tqdm
 from typing import Literal, Tuple
@@ -191,6 +191,7 @@ class SqueezeExcitationResNet(Data_Path):
         batch_size: int = 64,
         feature_extract: bool = True,
         up_to_layer: int = 0,
+        save_name: str = '',
         use_pretrained: bool = True,
     ) -> None:
         super().__init__()
@@ -198,6 +199,7 @@ class SqueezeExcitationResNet(Data_Path):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.batch_size = batch_size
         self.num_classes = num_classes
+        self.save_name = save_name
         self.dataloading()
 
         # self.model = torchvision.models.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1) #resnet_model()
@@ -284,7 +286,7 @@ class SqueezeExcitationResNet(Data_Path):
 
         val_acc = []  # track val accuracy
         self.best_model = copy.deepcopy(self.model_ft.state_dict())
-        self.BEST_MODEL_PATH = 'best_model_resnet.pty'
+        self.BEST_MODEL_PATH = f'best_model_resnet_{self.save_name}.pty'
         best_acc = 0.0
         count_not_better = 0
 
@@ -391,7 +393,7 @@ class SqueezeExcitationResNet(Data_Path):
                 break
 
         # save json log
-        with open("./logs/log_resnet.json", "w") as fp:
+        with open(f"./logs/log_resnet_{self.save_name}.json", "w") as fp:
             json.dump(log, fp)
 
         # save best model state dict
@@ -477,21 +479,34 @@ class SqueezeExcitationResNet(Data_Path):
 
 
 if __name__ == "__main__":
-    """s = SVM_Path()
-    s.set_classifier()
-    tf_i = time.time()
-    s.fit_classifier()
-    tf_f = time.time()
-    s.predict_classifier("train", save=True)
-    tp_tr = time.time()
-    s.predict_classifier("val", save=True)
-    tp_v = time.time()
-    s.predict_classifier("test", save=True)
-    tp_te = time.time()
+    try:
+        model_class = sys.argv[1] # svm or resnet
+        if model_class not in ['svm', 'resnet']:
+            raise Exception(f'model_class is "svm" or "resnet", got {model_class}')
+        up_to_layer = int(sys.argv[2]) # for resnet
+        save_name = sys.argv[3] # save logs and paths
+    except:
+        model_class = 'resnet'
+        up_to_layer = 0
+        save_name = ''
 
-    print(f'\nTime to fit: {tf_f - tf_i}')
-    print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')"""
+    if model_class == 'svm':
+        s = SVM_Path()
+        s.set_classifier()
+        tf_i = time.time()
+        s.fit_classifier()
+        tf_f = time.time()
+        s.predict_classifier("train", save=True)
+        tp_tr = time.time()
+        s.predict_classifier("val", save=True)
+        tp_v = time.time()
+        s.predict_classifier("test", save=True)
+        tp_te = time.time()
 
-    se = SqueezeExcitationResNet(feature_extract=True, up_to_layer=4)
-    se.train_model(epochs=100)
-    se.test_model()
+        print(f'\nTime to fit: {tf_f - tf_i}')
+        print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')
+    
+    elif model_class == 'resnet':
+        se = SqueezeExcitationResNet(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name)
+        se.train_model(epochs=100)
+        se.test_model()
