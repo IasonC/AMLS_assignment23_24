@@ -190,12 +190,12 @@ class SqueezeExcitationResNet(Data_Path):
         num_classes: int = 9,
         batch_size: int = 64,
         feature_extract: bool = True,
+        up_to_layer: int = 0,
         use_pretrained: bool = True,
-        device: str = "cuda",
     ) -> None:
         super().__init__()
 
-        self.device = device
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.batch_size = batch_size
         self.num_classes = num_classes
         self.dataloading()
@@ -203,12 +203,12 @@ class SqueezeExcitationResNet(Data_Path):
         # self.model = torchvision.models.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1) #resnet_model()
         # resnet pretrained on ImageNet (transfer learning)
         self.model_ft = torchvision.models.resnet18(pretrained=use_pretrained)
-        self.set_parameter_requires_grad(self.model_ft, feature_extract)
+        self.set_parameter_requires_grad(self.model_ft, feature_extract, up_to_layer)
         num_ftrs = self.model_ft.fc.in_features
         self.model_ft.fc = torch.nn.Linear(num_ftrs, num_classes)
         self.input_size = 28
 
-        self.model_ft.to(device)
+        self.model_ft.to(self.device)
 
         print("\nResNet18 Model:\n---------------------------------")
         print(self.model_ft)
@@ -222,23 +222,28 @@ class SqueezeExcitationResNet(Data_Path):
         else:
             params_to_update = self.model_ft.parameters()
 
-        self.optimizer = torch.optim.SGD(params_to_update, lr=0.001, momentum=0.9)
+        self.optimizer = torch.optim.SGD(params_to_update, lr=0.001, momentum=0.9)#, weight_decay=0.01)
         self.criterion = torch.nn.CrossEntropyLoss()
         # self.scheduler = lr_scheduler.StepLR(80, 0.1)
 
         # metrics Precision & Recall
         self.P = Precision(
             task="multiclass", average="macro", num_classes=num_classes
-        ).to(device)
+        ).to(self.device)
         self.R = Recall(task="multiclass", average="macro", num_classes=num_classes).to(
-            device
+            self.device
         )
         # macro averaging to emphasize class performance, not instance (avoid class imbalance)
 
-    def set_parameter_requires_grad(self, model, feature_extracting):
+    def set_parameter_requires_grad(self, model, feature_extracting, up_to_layer):
         if feature_extracting:
-            for param in model.parameters():
-                param.requires_grad = False
+            cnt = 0
+            for child in self.model_ft.children():
+                print(f'Freezing child layer: {child}')
+                for param in child.parameters():
+                    param.requires_grad = False
+                cnt += 1
+                if cnt >= up_to_layer: break # freeze up to given layers
 
     def dataloading(self) -> None:
         print("Dataloading starting...")
@@ -279,6 +284,7 @@ class SqueezeExcitationResNet(Data_Path):
 
         val_acc = []  # track val accuracy
         self.best_model = copy.deepcopy(self.model_ft.state_dict())
+        self.BEST_MODEL_PATH = 'best_model_resnet.pty'
         best_acc = 0.0
         count_not_better = 0
 
@@ -385,8 +391,12 @@ class SqueezeExcitationResNet(Data_Path):
                 break
 
         # save json log
-        with open("./logs/log_resnet_v1.json", "w") as fp:
+        with open("./logs/log_resnet.json", "w") as fp:
             json.dump(log, fp)
+
+        # save best model state dict
+        self.model_ft.load_state_dict(self.best_model)
+        torch.save(self.model_ft.state_dict(), self.BEST_MODEL_PATH)
 
         """
         # Training
@@ -410,9 +420,15 @@ class SqueezeExcitationResNet(Data_Path):
         print(f'Val Loss: {loss.item()}')
         """
 
-    def test_model(self):
+    def test_model(self, load_model: bool = False):
         # load best model
-        self.model_ft.load_state_dict(self.best_model)
+
+        if load_model:
+            self.model_ft.load_state_dict(torch.load(self.BEST_MODEL_PATH))
+            self.model_ft.to(self.device)
+        else:
+            try: self.model_ft.load_state_dict(self.best_model)
+            except: raise Exception('No state dict cached. Re-run training or load from disk.')
 
         L, acc, prec, rec, batch_count = 0.0, 0, 0.0, 0.0, 0
 
@@ -476,6 +492,6 @@ if __name__ == "__main__":
     print(f'\nTime to fit: {tf_f - tf_i}')
     print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')"""
 
-    se = SqueezeExcitationResNet(feature_extract=False)
+    se = SqueezeExcitationResNet(feature_extract=True, up_to_layer=4)
     se.train_model(epochs=100)
     se.test_model()
