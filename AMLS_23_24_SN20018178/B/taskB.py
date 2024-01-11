@@ -170,7 +170,7 @@ class SVM_Path(Data_Path):
 
 ############################################################################
 ############                                                    ############
-############       SQUEEZE-AND-EXCITATION RESNET MODEL          ############
+############      SQUEEZE-AND-EXCITATION & RESNET MODELS        ############
 ############                                                    ############
 ############################################################################
 
@@ -178,46 +178,11 @@ import torch
 import torchvision
 from torchvision.transforms import v2
 import torch.nn.functional as F
-from torchvision.models.resnet import ResNet18_Weights
 from torch.utils.data import TensorDataset, DataLoader
 from torchmetrics import Precision, Recall
-
-# from senet.se_resnet import resnet_model
 import copy
 
-class DropBlock(torch.nn.Module):
-    def __init__(self, block_size: int, p: float = 0.5):
-        super().__init__()
-        self.block_size = block_size
-        self.p = p
-
-    def calculate_gamma(self, x: torch.Tensor) -> float:
-        """Compute gamma, eq (1) in the paper
-        Args:
-            x (Tensor): Input tensor
-        Returns:
-            Tensor: gamma
-        """
-        
-        invalid = (1 - self.p) / (self.block_size ** 2)
-        valid = (x.shape[-1] ** 2) / ((x.shape[-1] - self.block_size + 1) ** 2)
-        return invalid * valid
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.training:
-            gamma = self.calculate_gamma(x)
-            mask = torch.bernoulli(torch.ones_like(x) * gamma)
-            mask_block = 1 - F.max_pool2d(
-                mask,
-                kernel_size=(self.block_size, self.block_size),
-                stride=(1, 1),
-                padding=(self.block_size // 2, self.block_size // 2),
-            )
-            x = mask_block * x * (mask_block.numel() / mask_block.sum())
-        return x
-
-
-class SqueezeExcitationResNet(Data_Path):
+class PathResNet18(Data_Path):
     def __init__(
         self,
         num_classes: int = 9,
@@ -294,11 +259,11 @@ class SqueezeExcitationResNet(Data_Path):
         val_dataset = TensorDataset(v, v_label)
         test_dataset = TensorDataset(te, te_label)
 
-        self.transforms = v2.Compose([
-            #v2.RandomHorizontalFlip(p=0.5),
-            v2.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)), # policy learnt on ImageNet (generalisable ok)
-        ])
-        self.cutmix = v2.CutMix(num_classes=self.num_classes)
+        #self.transforms = v2.Compose([
+        #    #v2.RandomHorizontalFlip(p=0.5),
+        #    v2.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)), # policy learnt on ImageNet (generalisable ok)
+        #])
+        #self.cutmix = v2.CutMix(num_classes=self.num_classes)
 
         train_dataloader = DataLoader(
             train_dataset, batch_size=self.batch_size, shuffle=True
@@ -314,7 +279,7 @@ class SqueezeExcitationResNet(Data_Path):
 
         print("Dataloading done...")
 
-    def train_model(self, epochs: int = 10, early_stopping: bool = False):
+    def train_model(self, epochs: int = 10, early_stopping: bool = False, save_cm: bool = True):
         """tqdm_rep = reporters.TQDMReporter(range(epochs))
         tensorboard_rep = reporters.TensorboardReporter('./senet/logdir/')
         _callbacks = [tqdm_rep, tensorboard_rep, callbacks.AccuracyCallback()]
@@ -340,6 +305,9 @@ class SqueezeExcitationResNet(Data_Path):
             "val-recall": [],
         }
 
+        all_preds, all_labels = torch.tensor([]), torch.tensor([])
+        flag_cm = True
+
         for e in range(epochs):
             print(f"\nEPOCH {e} of {epochs}\n")
 
@@ -359,14 +327,15 @@ class SqueezeExcitationResNet(Data_Path):
                 for x, y in self.dataloaders_dict[mode]:
                     # x = x.to(self.device)
 
-                    if x.shape[0] < self.batch_size:
-                        continue  # last batch, uneven
+                    if x.shape[0] < self.batch_size or y.shape[0] < self.batch_size:
+                        #print(f'{mode} batch undersized --> skipped...')
+                        continue # last batch, uneven
 
                     # print(f'SHAPE: x = {x.shape}, y = {y.shape}')
                     x = torch.reshape(x, (self.batch_size, 3, 28, 28))
-                    x = self.transforms(x) # apply transforms
+                    #x = self.transforms(x) # apply transforms
 
-                    x, y = self.cutmix(x, y)
+                    #x, y = self.cutmix(x, y)
                     # y = y.to(self.device)
 
                     self.optimizer.zero_grad()
@@ -396,6 +365,15 @@ class SqueezeExcitationResNet(Data_Path):
                     current_recall += recall
 
                     batch_count += 1
+
+                    # confusion matrix -> aggregate valacc
+                    if mode=='val' and e==epochs-1 and flag_cm: # last epoch, first batch
+                        all_preds = preds
+                        all_labels = y
+                        flag_cm = False
+                    elif mode=='val' and e==epochs-1:
+                        all_preds = torch.cat((all_preds, preds), dim=-1)
+                        all_labels = torch.cat((all_labels, y), dim=-1)
 
                 epoch_loss = current_loss / len(self.dataloaders_dict[mode].dataset)
                 epoch_acc = current_corrects.double() / len(
@@ -442,29 +420,14 @@ class SqueezeExcitationResNet(Data_Path):
         self.model_ft.load_state_dict(self.best_model)
         torch.save(self.model_ft.state_dict(), self.BEST_MODEL_PATH)
 
-        """
-        # Training
-        for batch_idx, (x,y) in enumerate(self.train_dataloader):
-            x = torch.reshape(x, (64,3,28,28))
-            
-            self.optimizer.zero_grad() # clear gradients
-            ypred = self.model(x)
-            loss = self.criterion(ypred,y)
-            loss.backward() # calculate gradients
-            self.optimizer.step() # update weights
-            
-        print(f'Train Loss: {loss.item()}')
+        if save_cm: # confusion matrix of validation results on last epoch
+            cm = confusion_matrix(all_labels.cpu(), all_preds.cpu())
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+            disp.plot()
+            plt.savefig(f"B_resnet_cm_val.pdf")
 
-        # Validation
-        with torch.no_grad():
-            for batch_idx, (x,y) in enumerate(self.val_dataloader):
-                ypred = self.model(x)
-                loss = self.criterion(ypred,y)
-            
-        print(f'Val Loss: {loss.item()}')
-        """
 
-    def test_model(self, load_model: bool = False):
+    def test_model(self, load_model: bool = False, save_cm: bool = True):
         # load best model
 
         if load_model:
@@ -475,6 +438,9 @@ class SqueezeExcitationResNet(Data_Path):
             except: raise Exception('No state dict cached. Re-run training or load from disk.')
 
         L, acc, prec, rec, batch_count = 0.0, 0, 0.0, 0.0, 0
+
+        all_preds, all_labels = torch.tensor([]), torch.tensor([])
+        flag_cm = True
 
         for x, y in self.dataloaders_dict["test"]:
             if x.shape[0] < self.batch_size:
@@ -508,6 +474,15 @@ class SqueezeExcitationResNet(Data_Path):
             rec += recall
             batch_count += 1
 
+            # confusion matrix aggregation
+            if flag_cm: # first batch
+                all_preds = preds
+                all_labels = y
+                flag_cm = False
+            else:
+                all_preds = torch.cat((all_preds, preds), dim=-1)
+                all_labels = torch.cat((all_labels, y), dim=-1)
+
         L /= len(self.dataloaders_dict["test"].dataset)
         acc = acc.double() / len(self.dataloaders_dict["test"].dataset)
         prec /= batch_count
@@ -519,6 +494,32 @@ class SqueezeExcitationResNet(Data_Path):
             )
         )
 
+        if save_cm:
+            cm = confusion_matrix(all_labels.cpu(), all_preds.cpu())
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+            disp.plot()
+            plt.savefig(f"B_resnet_cm_test.pdf")
+
+
+class SqueezeExcitationResNet(PathResNet18):
+    
+    def __init__(
+        self,
+        num_classes: int = 9,
+        batch_size: int = 64,
+        feature_extract: bool = True,
+        up_to_layer: int = 0,
+        save_name: str = '',
+        use_pretrained: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.model_ft = torch.nn.Sequential(
+            self.model_ft,
+            torch.nn.Dropout1d(p=0.5, inplace=True),
+            torch.nn.Softmax()
+        )
+
 
 if __name__ == "__main__":
     try:
@@ -528,7 +529,7 @@ if __name__ == "__main__":
         up_to_layer = int(sys.argv[2]) # for resnet
         save_name = sys.argv[3] # save logs and paths
     except:
-        model_class = 'resnet'
+        model_class = 'squeeze-excitation'
         up_to_layer = 0
         save_name = ''
 
@@ -549,6 +550,11 @@ if __name__ == "__main__":
         print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')
     
     elif model_class == 'resnet':
+        rn = PathResNet18(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name)
+        rn.train_model(epochs=10)
+        rn.test_model()
+
+    elif model_class == 'squeeze-excitation':
         se = SqueezeExcitationResNet(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name)
-        se.train_model(epochs=100)
+        se.train_model(epochs=10)
         se.test_model()
