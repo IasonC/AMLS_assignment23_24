@@ -176,12 +176,45 @@ class SVM_Path(Data_Path):
 
 import torch
 import torchvision
+from torchvision.transforms import v2
+import torch.nn.functional as F
 from torchvision.models.resnet import ResNet18_Weights
 from torch.utils.data import TensorDataset, DataLoader
 from torchmetrics import Precision, Recall
 
 # from senet.se_resnet import resnet_model
 import copy
+
+class DropBlock(torch.nn.Module):
+    def __init__(self, block_size: int, p: float = 0.5):
+        super().__init__()
+        self.block_size = block_size
+        self.p = p
+
+    def calculate_gamma(self, x: torch.Tensor) -> float:
+        """Compute gamma, eq (1) in the paper
+        Args:
+            x (Tensor): Input tensor
+        Returns:
+            Tensor: gamma
+        """
+        
+        invalid = (1 - self.p) / (self.block_size ** 2)
+        valid = (x.shape[-1] ** 2) / ((x.shape[-1] - self.block_size + 1) ** 2)
+        return invalid * valid
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.training:
+            gamma = self.calculate_gamma(x)
+            mask = torch.bernoulli(torch.ones_like(x) * gamma)
+            mask_block = 1 - F.max_pool2d(
+                mask,
+                kernel_size=(self.block_size, self.block_size),
+                stride=(1, 1),
+                padding=(self.block_size // 2, self.block_size // 2),
+            )
+            x = mask_block * x * (mask_block.numel() / mask_block.sum())
+        return x
 
 
 class SqueezeExcitationResNet(Data_Path):
@@ -261,6 +294,12 @@ class SqueezeExcitationResNet(Data_Path):
         val_dataset = TensorDataset(v, v_label)
         test_dataset = TensorDataset(te, te_label)
 
+        self.transforms = v2.Compose([
+            #v2.RandomHorizontalFlip(p=0.5),
+            v2.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)), # policy learnt on ImageNet (generalisable ok)
+        ])
+        self.cutmix = v2.CutMix(num_classes=self.num_classes)
+
         train_dataloader = DataLoader(
             train_dataset, batch_size=self.batch_size, shuffle=True
         )
@@ -325,6 +364,9 @@ class SqueezeExcitationResNet(Data_Path):
 
                     # print(f'SHAPE: x = {x.shape}, y = {y.shape}')
                     x = torch.reshape(x, (self.batch_size, 3, 28, 28))
+                    x = self.transforms(x) # apply transforms
+
+                    x, y = self.cutmix(x, y)
                     # y = y.to(self.device)
 
                     self.optimizer.zero_grad()
