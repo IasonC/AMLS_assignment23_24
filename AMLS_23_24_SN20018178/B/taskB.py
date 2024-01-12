@@ -170,14 +170,12 @@ class SVM_Path(Data_Path):
 
 ############################################################################
 ############                                                    ############
-############      SQUEEZE-AND-EXCITATION & RESNET MODELS        ############
+############                    RESNET MODEL                    ############
 ############                                                    ############
 ############################################################################
 
 import torch
 import torchvision
-from torchvision.transforms import v2
-import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from torchmetrics import Precision, Recall
 import copy
@@ -191,6 +189,7 @@ class PathResNet18(Data_Path):
         up_to_layer: int = 0,
         save_name: str = '',
         use_pretrained: bool = True,
+        post_layers: bool = True,
     ) -> None:
         super().__init__()
 
@@ -207,6 +206,13 @@ class PathResNet18(Data_Path):
         num_ftrs = self.model_ft.fc.in_features
         self.model_ft.fc = torch.nn.Linear(num_ftrs, num_classes)
         self.input_size = 28
+
+        if post_layers:
+            self.model_ft = torch.nn.Sequential(
+                self.model_ft,
+                torch.nn.Dropout1d(p=0.1, inplace=True),
+                torch.nn.Softmax()
+            )
 
         self.model_ft.to(self.device)
 
@@ -239,11 +245,13 @@ class PathResNet18(Data_Path):
         if feature_extracting:
             cnt = 0
             for child in self.model_ft.children():
+                if cnt >= up_to_layer:
+                    break # freeze up to given layers
                 print(f'Freezing child layer: {child}')
                 for param in child.parameters():
                     param.requires_grad = False
                 cnt += 1
-                if cnt >= up_to_layer: break # freeze up to given layers
+                
 
     def dataloading(self) -> None:
         print("Dataloading starting...")
@@ -499,27 +507,7 @@ class PathResNet18(Data_Path):
             disp = ConfusionMatrixDisplay(confusion_matrix=cm)
             disp.plot()
             plt.savefig(f"B_resnet_cm_test.pdf")
-
-
-class SqueezeExcitationResNet(PathResNet18):
-    
-    def __init__(
-        self,
-        num_classes: int = 9,
-        batch_size: int = 64,
-        feature_extract: bool = True,
-        up_to_layer: int = 0,
-        save_name: str = '',
-        use_pretrained: bool = True,
-    ) -> None:
-        super().__init__()
-
-        self.model_ft = torch.nn.Sequential(
-            self.model_ft,
-            torch.nn.Dropout1d(p=0.5, inplace=True),
-            torch.nn.Softmax()
-        )
-
+        
 
 if __name__ == "__main__":
     try:
@@ -529,7 +517,7 @@ if __name__ == "__main__":
         up_to_layer = int(sys.argv[2]) # for resnet
         save_name = sys.argv[3] # save logs and paths
     except:
-        model_class = 'squeeze-excitation'
+        model_class = 'resnet'
         up_to_layer = 0
         save_name = ''
 
@@ -550,11 +538,6 @@ if __name__ == "__main__":
         print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')
     
     elif model_class == 'resnet':
-        rn = PathResNet18(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name)
+        rn = PathResNet18(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name, post_layers=True)
         rn.train_model(epochs=10)
         rn.test_model()
-
-    elif model_class == 'squeeze-excitation':
-        se = SqueezeExcitationResNet(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name)
-        se.train_model(epochs=10)
-        se.test_model()
