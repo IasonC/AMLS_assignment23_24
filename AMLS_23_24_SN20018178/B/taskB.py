@@ -170,15 +170,19 @@ class SVM_Path(Data_Path):
 
 ############################################################################
 ############                                                    ############
-############                    RESNET MODEL                    ############
+############      SQUEEZE-AND-EXCITATION & RESNET MODELS        ############
 ############                                                    ############
 ############################################################################
 
 import torch
 import torchvision
+from torchvision.models.resnet import BasicBlock
+from torchvision.transforms import v2
+import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from torchmetrics import Precision, Recall
 import copy
+from collections import OrderedDict
 
 class PathResNet18(Data_Path):
     def __init__(
@@ -452,7 +456,7 @@ class PathResNet18(Data_Path):
 
         for x, y in self.dataloaders_dict["test"]:
             if x.shape[0] < self.batch_size:
-                s = x.shape[0]
+                continue
             else:
                 s = self.batch_size
 
@@ -507,17 +511,134 @@ class PathResNet18(Data_Path):
             disp = ConfusionMatrixDisplay(confusion_matrix=cm)
             disp.plot()
             plt.savefig(f"B_resnet_cm_test.pdf")
+
+
+class SqueezeExcitation(torch.nn.Module):
+    """
+    This block implements the Squeeze-and-Excitation block from https://arxiv.org/abs/1709.01507 (see Fig. 1).
+    Parameters ``activation``, and ``scale_activation`` correspond to ``delta`` and ``sigma`` in eq. 3.
+
+    Args:
+        input_channels (int): Number of channels in the input image
+        squeeze_channels (int): Number of squeeze channels
+        activation (Callable[..., torch.nn.Module], optional): ``delta`` activation. Default: ``torch.nn.ReLU``
+        scale_activation (Callable[..., torch.nn.Module]): ``sigma`` activation. Default: ``torch.nn.Sigmoid``
+    """
+
+    def __init__(
+        self,
+        C: int,
+        r = 16,
+        activation = torch.nn.ReLU,
+        scale_activation = torch.nn.Sigmoid,
+    ) -> None:
+        super().__init__()
+        self.avgpool = torch.nn.AdaptiveAvgPool2d((1, 1))
+        self.fc1 = torch.nn.Linear(C, int(C/r)) #torch.nn.Conv2d(input_channels, squeeze_channels, 1)
+        self.fc2 = torch.nn.Linear(int(C/r), C)
+        self.activation = activation()
+        self.scale_activation = scale_activation()
+        self.C = C
+
+    def _scale(self, input):
+        scale = self.avgpool(input)
+        scale = torch.reshape(scale, (-1, 1, 1, self.C))
+        scale = self.fc1(scale)
+        scale = self.activation(scale)
+        scale = self.fc2(scale)
+        return self.scale_activation(scale)
+
+    def forward(self, input):
+        scale = self._scale(input)
+        
+        repeats = input.shape[-1]
+        scale = torch.reshape(scale, (input.shape[0],self.C,1,1))
+        scale = scale.repeat(1,1,repeats,repeats)
+        
+        se = scale * input
+        return se
+    
+class Reshape(torch.nn.Module):
+    def __init__(self, shape):
+        super().__init__()
+        self.shape = shape
+    def forward(self, input):
+        return torch.reshape(input, self.shape)
+    
+
+class SqueezeExcitationResNet(PathResNet18):
+    
+    def __init__(
+        self,
+        num_classes: int = 9,
+        batch_size: int = 64,
+        feature_extract: bool = True,
+        up_to_layer: int = 0,
+        save_name: str = '',
+        use_pretrained: bool = True,
+    ) -> None:
+        super().__init__()
+
+        """layers = [] #OrderedDict([])
+        for child in self.model_ft.children():           
+            if child.children():
+                for subchild in child.children():
+                    if isinstance(subchild, torch.nn.Sequential):
+                        for m in list(subchild.modules())[1:]:
+                            layers.append(m)
+                            if isinstance(m, BasicBlock):
+                                in_channels = m.conv1.in_channels
+                                out_channels = m.conv1.out_channels
+
+                                '''SEBlock = torchvision.ops.SqueezeExcitation(
+                                    input_channels=out_channels,
+                                    squeeze_channels=out_channels,
+                                    # ReLU activation
+                                )
+                                SE_list = list(SEBlock.modules())
+                                SE_list[1].output_size = (7, 7)
+                                SE_list[2].in_channels = in_channels
+                                SE_list[2].kernel_size = (3,3)
+                                SE_list[3].kernel_size = (3,3)
+                                SEBlock_final = SE_list[0]
+                                
+                                layers.append(SEBlock_final)'''
+
+                                layers.append(SqueezeExcitation(C = out_channels))
+                    else:
+                        layers.append(subchild)
+            else:
+                layers.append(child)"""
+        
+        layers = list(self.model_ft.children())
+        senet_layers = list(layers[0].children())
+        #print({k:v for v,k in enumerate(senet_layers)})
+        senet_layers.insert(5, SqueezeExcitation(C=64))
+        senet_layers.insert(7, SqueezeExcitation(C=128))
+        senet_layers.insert(9, SqueezeExcitation(C=256))
+        senet_layers.insert(11, SqueezeExcitation(C=512))
+        senet_layers.insert(13, Reshape((self.batch_size,512)))
+        
+        senet_layers.append(layers[1])
+        senet_layers.append(layers[2])
+        
+        self.model_ft = torch.nn.Sequential(*senet_layers)
+
+        self.model_ft.to(self.device)
+        
+        print('\n\nMODEL with Squeeze-Excitation.......................\n\n')
+        print(self.model_ft)
         
 
 if __name__ == "__main__":
     try:
         model_class = sys.argv[1] # svm or resnet
-        if model_class not in ['svm', 'resnet']:
-            raise Exception(f'model_class is "svm" or "resnet", got {model_class}')
+        if model_class not in ['svm', 'resnet', 'squeeze-excitation']:
+            raise Exception(f'model_class is "svm" or "resnet" or "squeeze-excitation, got {model_class}')
         up_to_layer = int(sys.argv[2]) # for resnet
         save_name = sys.argv[3] # save logs and paths
     except:
-        model_class = 'resnet'
+        model_class = 'squeeze-excitation'
         up_to_layer = 0
         save_name = ''
 
@@ -541,3 +662,8 @@ if __name__ == "__main__":
         rn = PathResNet18(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name, post_layers=True)
         rn.train_model(epochs=10)
         rn.test_model()
+
+    elif model_class == 'squeeze-excitation':
+        se = SqueezeExcitationResNet(feature_extract=False, up_to_layer=up_to_layer, save_name=save_name)
+        se.train_model(epochs=100)
+        se.test_model()
