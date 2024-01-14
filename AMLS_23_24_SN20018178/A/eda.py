@@ -37,3 +37,4 @@ print(f'TEST: μ = {np.mean(svm_te)}, σ = {np.var(svm_te)}, MIN = {np.min(svm_t
 
 print('Class Split')
 print(f'TRAIN: {sum(train_labels)} pneumonia, {len(train_labels)-sum(train_labels)} normal')
+

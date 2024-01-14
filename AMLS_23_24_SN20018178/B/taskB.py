@@ -194,6 +194,9 @@ class PathResNet18(Data_Path):
         save_name: str = '',
         use_pretrained: bool = True,
         post_layers: bool = True,
+        dr: float = 0.1,
+        lr: float = 0.001,
+        rho: float = 0.9
     ) -> None:
         super().__init__()
 
@@ -214,7 +217,7 @@ class PathResNet18(Data_Path):
         if post_layers:
             self.model_ft = torch.nn.Sequential(
                 self.model_ft,
-                torch.nn.Dropout1d(p=0.1, inplace=True),
+                torch.nn.Dropout1d(p=dr, inplace=True),
                 torch.nn.Softmax()
             )
 
@@ -232,7 +235,7 @@ class PathResNet18(Data_Path):
         else:
             params_to_update = self.model_ft.parameters()
 
-        self.optimizer = torch.optim.SGD(params_to_update, lr=0.001, momentum=0.9)#, weight_decay=0.01)
+        self.optimizer = torch.optim.SGD(params_to_update, lr=lr, momentum=rho)#, weight_decay=0.01)
         self.criterion = torch.nn.CrossEntropyLoss()
         # self.scheduler = lr_scheduler.StepLR(80, 0.1)
 
@@ -413,7 +416,7 @@ class PathResNet18(Data_Path):
                         best_acc = epoch_acc
                         self.best_model = copy.deepcopy(self.model_ft.state_dict())
                     elif (
-                        epoch_acc < 1.1 * best_acc
+                        epoch_acc < 1.01 * best_acc
                     ):  # next epoch less than 10 percent val-acc improvement
                         count_not_better += 1
 
@@ -436,7 +439,7 @@ class PathResNet18(Data_Path):
             cm = confusion_matrix(all_labels.cpu(), all_preds.cpu())
             disp = ConfusionMatrixDisplay(confusion_matrix=cm)
             disp.plot()
-            plt.savefig(f"B_resnet_cm_val.pdf")
+            plt.savefig(f"B_resnet_cm_val_{self.save_name}.pdf")
 
 
     def test_model(self, load_model: bool = False, save_cm: bool = True):
@@ -510,7 +513,7 @@ class PathResNet18(Data_Path):
             cm = confusion_matrix(all_labels.cpu(), all_preds.cpu())
             disp = ConfusionMatrixDisplay(confusion_matrix=cm)
             disp.plot()
-            plt.savefig(f"B_resnet_cm_test.pdf")
+            plt.savefig(f"B_resnet_cm_test_{self.save_name}.pdf")
 
 
 class SqueezeExcitation(torch.nn.Module):
@@ -576,8 +579,19 @@ class SqueezeExcitationResNet(PathResNet18):
         up_to_layer: int = 0,
         save_name: str = '',
         use_pretrained: bool = True,
+        dr: float = 0,
+        lr: float = 0.001,
+        rho: float = 0.9
     ) -> None:
-        super().__init__()
+        super().__init__(num_classes=num_classes,
+                         batch_size=batch_size,
+                         feature_extract=feature_extract,
+                         up_to_layer=up_to_layer,
+                         save_name=save_name,
+                         dr=dr,
+                         lr=lr,
+                         rho=rho,
+                         )
 
         """layers = [] #OrderedDict([])
         for child in self.model_ft.children():           
@@ -637,10 +651,17 @@ if __name__ == "__main__":
             raise Exception(f'model_class is "svm" or "resnet" or "squeeze-excitation, got {model_class}')
         up_to_layer = int(sys.argv[2]) # for resnet
         save_name = sys.argv[3] # save logs and paths
+        if model_class != 'svm':
+            dropout = float(sys.argv[4])
+            lr = float(sys.argv[5])
+            rho = float(sys.argv[6])
     except:
         model_class = 'squeeze-excitation'
         up_to_layer = 0
         save_name = ''
+        dropout = 0.1
+        lr = 0.001
+        rho = 0.9
 
     if model_class == 'svm':
         s = SVM_Path()
@@ -659,11 +680,11 @@ if __name__ == "__main__":
         print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')
     
     elif model_class == 'resnet':
-        rn = PathResNet18(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name, post_layers=True)
-        rn.train_model(epochs=10)
+        rn = PathResNet18(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name, post_layers=True, dr=dropout, lr=lr, rho=rho)
+        rn.train_model(epochs=20)
         rn.test_model()
 
     elif model_class == 'squeeze-excitation':
-        se = SqueezeExcitationResNet(feature_extract=False, up_to_layer=up_to_layer, save_name=save_name)
+        se = SqueezeExcitationResNet(feature_extract=False, up_to_layer=up_to_layer, save_name=save_name, dr=dropout, lr=lr, rho=rho)
         se.train_model(epochs=100)
         se.test_model()

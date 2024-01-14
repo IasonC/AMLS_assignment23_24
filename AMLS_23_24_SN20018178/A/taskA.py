@@ -1,7 +1,7 @@
 from medmnist import PneumoniaMNIST
 import numpy as np
 from matplotlib import pyplot as plt
-import os
+import os, sys
 from tqdm import tqdm
 from sklearn import svm
 from sklearn.base import BaseEstimator
@@ -127,7 +127,7 @@ class SVM_Pneumonia(Data_Pneumonia):
             cm = confusion_matrix(y, pred_labels)
             disp = ConfusionMatrixDisplay(confusion_matrix=cm)
             disp.plot()
-            plt.savefig(f'A_svm_cm_{mode}.pdf')
+            plt.savefig(f'A_svm_cm_{mode}_.pdf')
 
         return accuracy
 
@@ -180,7 +180,7 @@ class BaggedSVM_Pneumonia(SVM_Pneumonia):
             cm = confusion_matrix(y, pred_labels)
             disp = ConfusionMatrixDisplay(confusion_matrix=cm)
             disp.plot()
-            plt.savefig(f'A_svm_cm_{mode}.pdf')
+            plt.savefig(f'A_bag_svm_cm_{mode}_.pdf')
 
         return accuracy
     
@@ -252,7 +252,7 @@ class custom_BaggedSVM_Pneumonia(SVM_Pneumonia):
             cm = confusion_matrix(y, pred_labels)
             disp = ConfusionMatrixDisplay(confusion_matrix=cm)
             disp.plot()
-            plt.savefig(f'A_custombag_svm_cm_{mode}.pdf')
+            plt.savefig(f'A_custombag_svm_cm_{mode}_.pdf')
 
         return accuracy
     
@@ -484,33 +484,93 @@ class cross_validation(SVM_Pneumonia):
 
 if __name__ == '__main__':
 
-    '''
-    s = BaggedSVM_Pneumonia(C=0.7858110973815596,
-                            gamma=0.04500387079787024)
-    s.set_baggedSVM(n_estimators=100)
-    s.fit()
-    s.predict_classifier('train')
-    s.predict_classifier('val')
-    s.predict_classifier('test')
-    '''
+    try:
+        model = sys.argv[1]
+        if model not in ['svm','svm-b','svm-be']:
+            raise Exception(f"`model` is 'svm', 'svm-b', or 'svm-be', got {model}.")
+        mode = sys.argv[2]
+        if mode not in ['train','val','test','all']:
+            raise Exception(f"`mode' is 'train', 'val', 'test', or 'all', got {mode}")
+        save = True if sys.argv[3]=='True' else False
+        C = float(sys.argv[4])
+        gamma = sys.argv[5]
+        if gamma!='scale':
+            gamma = float(gamma)
+        if model in ['svm-b', 'svm-be']:
+            B = int(sys.argv[6])
+            p = float(sys.argv[7])
+        if model == 'svm-be':
+            cv = True if sys.argv[8]=='True' else False # True/False
+    except:
+        print('except')
+        model = 'svm'
+        mode = 'all'
+        C = 1
+        gamma = 'scale'
+        B = 10
+        p = 0.2
+        cv = False
+        save = False
+    
+    if model == 'svm':
+        svm_p = SVM_Pneumonia()
+        svm_p.set_classifier(C=C, gamma=gamma)#(C=C,gamma=gamma)
+        svm_p.fit_classifier()
 
-    '''
-    svm_p = SVM_Pneumonia()
-    svm_p.set_classifier(C=1,gamma='scale')
-    svm_p.fit_classifier()
-    svm_p.predict_classifier('test', save=True)
-    '''
-    '''
-    s = custom_BaggedSVM_Pneumonia(n_estimators=10, max_samples=0.2)
-    s.fit()
-    s.predict_classifier('train', save=True)
-    s.predict_classifier('val', save=True)
-    s.predict_classifier('test', save=True)
-    '''
+        if mode == 'all':
+            svm_p.predict_classifier('train', save)
+            svm_p.predict_classifier('val', save)
+            svm_p.predict_classifier('test', save)
+        elif mode == 'train':
+            svm_p.predict_classifier('train', save)
+        elif mode == 'val':
+            svm_p.predict_classifier('val', save)
+        else:
+            svm_p.predict_classifier('test', save)
 
-    modelsel = cross_validation(n=7, iter=20)
-    #modelsel.cv()
-    modelsel.predict_on_best_hparams('train')
-    modelsel.predict_on_best_hparams('val')
-    modelsel.predict_on_best_hparams('test')
+    elif model == 'svm-b':
+        s = BaggedSVM_Pneumonia(C=C, #0.7858110973815596,
+                                gamma=gamma, #0.04500387079787024
+                                )
+        s.set_baggedSVM(n_estimators=100)
+        s.fit()
+        
+        if mode == 'all':
+            s.predict_classifier('train', save)
+            s.predict_classifier('val', save)
+            s.predict_classifier('test', save)
+        elif mode == 'train':
+            s.predict_classifier('train', save)
+        elif mode == 'val':
+            s.predict_classifier('val', save)
+        else:
+            s.predict_classifier('test', save)
+
+    elif model == 'svm-be':
+        
+        if not cv:
+            s = custom_BaggedSVM_Pneumonia(C=C,
+                                       gamma=gamma,
+                                       n_estimators=B,
+                                       max_samples=p
+                                       )
+            s.fit()
+
+            if mode == 'all':
+                s.predict_classifier('train')
+                s.predict_classifier('val')
+                s.predict_classifier('test')
+            elif mode == 'train':
+                s.predict_classifier('train')
+            elif mode == 'val':
+                s.predict_classifier('val')
+            else:
+                s.predict_classifier('test')
+
+        else:
+            modelsel = cross_validation(n=7, iter=20)
+            modelsel.cv()
+            modelsel.predict_on_best_hparams('train')
+            modelsel.predict_on_best_hparams('val')
+            modelsel.predict_on_best_hparams('test')
     
