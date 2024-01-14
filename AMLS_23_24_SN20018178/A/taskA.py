@@ -23,8 +23,8 @@ class Data_Pneumonia(object):
 
     def __init__(self) -> None:
 
-        self.DATA_ROOT = '../Datasets/PneumoniaMNIST'
-        self.DATA_FILE = self.DATA_ROOT + '/pneumoniamnist.npz' # file after download
+        self.DATA_ROOT = 'Datasets/'
+        self.DATA_FILE = self.DATA_ROOT + 'pneumoniamnist.npz' # file after download
 
         if not os.path.exists(self.DATA_FILE):
             self._downloader()
@@ -489,8 +489,8 @@ if __name__ == '__main__':
         if model not in ['svm','svm-b','svm-be']:
             raise Exception(f"`model` is 'svm', 'svm-b', or 'svm-be', got {model}.")
         mode = sys.argv[2]
-        if mode not in ['train','val','test','all']:
-            raise Exception(f"`mode' is 'train', 'val', 'test', or 'all', got {mode}")
+        if mode not in ['train-val','test','all']:
+            raise Exception(f"`mode' is 'train-val', 'test', or 'all', got {mode}")
         save = True if sys.argv[3]=='True' else False
         C = float(sys.argv[4])
         gamma = sys.argv[5]
@@ -502,7 +502,6 @@ if __name__ == '__main__':
         if model == 'svm-be':
             cv = True if sys.argv[8]=='True' else False # True/False
     except:
-        print('except')
         model = 'svm'
         mode = 'all'
         C = 1
@@ -521,9 +520,8 @@ if __name__ == '__main__':
             svm_p.predict_classifier('train', save)
             svm_p.predict_classifier('val', save)
             svm_p.predict_classifier('test', save)
-        elif mode == 'train':
+        elif mode == 'train-val':
             svm_p.predict_classifier('train', save)
-        elif mode == 'val':
             svm_p.predict_classifier('val', save)
         else:
             svm_p.predict_classifier('test', save)
@@ -539,9 +537,8 @@ if __name__ == '__main__':
             s.predict_classifier('train', save)
             s.predict_classifier('val', save)
             s.predict_classifier('test', save)
-        elif mode == 'train':
+        elif mode == 'train-val':
             s.predict_classifier('train', save)
-        elif mode == 'val':
             s.predict_classifier('val', save)
         else:
             s.predict_classifier('test', save)
@@ -560,9 +557,8 @@ if __name__ == '__main__':
                 s.predict_classifier('train')
                 s.predict_classifier('val')
                 s.predict_classifier('test')
-            elif mode == 'train':
+            elif mode == 'train-val':
                 s.predict_classifier('train')
-            elif mode == 'val':
                 s.predict_classifier('val')
             else:
                 s.predict_classifier('test')

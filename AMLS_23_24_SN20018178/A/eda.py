@@ -2,7 +2,7 @@ from tqdm import tqdm
 import numpy as np
 
 
-DATA_FILE = '../Datasets/PneumoniaMNIST/pneumoniamnist.npz'
+DATA_FILE = '../Datasets/pneumoniamnist.npz'
 data = np.load(DATA_FILE)
 
 # Train-Val-Test Split extract

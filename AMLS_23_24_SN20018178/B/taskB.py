@@ -23,8 +23,8 @@ from sklearn.metrics import (
 
 class Data_Path(object):
     def __init__(self) -> None:
-        self.DATA_ROOT = "../Datasets/PathMNIST"
-        self.DATA_FILE = self.DATA_ROOT + "/pathmnist.npz"  # file after download
+        self.DATA_ROOT = "Datasets/"
+        self.DATA_FILE = self.DATA_ROOT + "pathmnist.npz"  # file after download
 
         if not os.path.exists(self.DATA_FILE):
             self._downloader()
@@ -649,42 +649,61 @@ if __name__ == "__main__":
         model_class = sys.argv[1] # svm or resnet
         if model_class not in ['svm', 'resnet', 'squeeze-excitation']:
             raise Exception(f'model_class is "svm" or "resnet" or "squeeze-excitation, got {model_class}')
-        up_to_layer = int(sys.argv[2]) # for resnet
-        save_name = sys.argv[3] # save logs and paths
+        mode = sys.argv[2]
+        if mode not in ['train-val','test','all']:
+            raise Exception(f'mode is "train-val","test","all", got {mode}')
+        up_to_layer = int(sys.argv[3]) # for resnet
+        save_name = sys.argv[4] # save logs and paths
         if model_class != 'svm':
-            dropout = float(sys.argv[4])
-            lr = float(sys.argv[5])
-            rho = float(sys.argv[6])
+            dropout = float(sys.argv[5])
+            lr = float(sys.argv[6])
+            rho = float(sys.argv[7])
+            epoch_num = int(sys.argv[8])
     except:
         model_class = 'squeeze-excitation'
+        mode = 'all'
         up_to_layer = 0
         save_name = ''
         dropout = 0.1
         lr = 0.001
         rho = 0.9
+        epoch_num = 50
 
     if model_class == 'svm':
         s = SVM_Path()
         s.set_classifier()
-        tf_i = time.time()
         s.fit_classifier()
-        tf_f = time.time()
-        s.predict_classifier("train", save=True)
-        tp_tr = time.time()
-        s.predict_classifier("val", save=True)
-        tp_v = time.time()
-        s.predict_classifier("test", save=True)
-        tp_te = time.time()
 
-        print(f'\nTime to fit: {tf_f - tf_i}')
-        print(f'Time to pred: {tp_tr-tf_f} Train | {tp_v-tp_tr} Val | {tp_te-tp_v} Test')
-    
+        if mode == 'train-val':
+            s.predict_classifier("train", save=True)
+            s.predict_classifier("val", save=True)
+        elif mode == 'test':
+            s.predict_classifier("test", save=True)
+        else:
+            s.predict_classifier("train", save=True)
+            s.predict_classifier("val", save=True)
+            s.predict_classifier("test", save=True)
+
     elif model_class == 'resnet':
         rn = PathResNet18(feature_extract=True, up_to_layer=up_to_layer, save_name=save_name, post_layers=True, dr=dropout, lr=lr, rho=rho)
-        rn.train_model(epochs=20)
-        rn.test_model()
+        
+        if mode == 'train_val':
+            rn.train_model(epochs=epoch_num)
+        elif mode == 'test':
+            rn.BEST_MODEL_PATH = './best_model/best_model_resnet_lr01rho9resnet.pty'
+            rn.test_model(load_model=True)
+        else:
+            rn.train_model(epochs=epoch_num)
+            rn.test_model()
 
     elif model_class == 'squeeze-excitation':
         se = SqueezeExcitationResNet(feature_extract=False, up_to_layer=up_to_layer, save_name=save_name, dr=dropout, lr=lr, rho=rho)
-        se.train_model(epochs=100)
-        se.test_model()
+        
+        if mode == 'train_val':
+            se.train_model(epochs=epoch_num)
+        elif mode == 'test':
+            se.BEST_MODEL_PATH = './best_model/best_model_resnet_lr001rho99SENet_fr0.pty'
+            se.test_model()
+        else:
+            se.train_model(epochs=epoch_num)
+            se.test_model()
